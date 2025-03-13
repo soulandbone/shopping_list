@@ -17,6 +17,8 @@ class GroceriesList extends StatefulWidget {
 
 class _GroceriesListState extends State<GroceriesList> {
   List<GroceryItem> _groceryItems = [];
+  var isLoading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -30,14 +32,31 @@ class _GroceriesListState extends State<GroceriesList> {
       'shopping-list.json',
     );
 
-    final response = await http.get(url);
-    //print('Response body is ${response.body}');
+    http.Response response;
+
+    try {
+      response = await http.get(url);
+
+      if (response.statusCode >= 400) {
+        throw Error();
+      }
+    } catch (err) {
+      setState(() {
+        _error = 'Failed to fetch data, please try again later';
+      });
+      return;
+    }
+
+    if (response.body == 'null') {
+      setState(() {
+        isLoading = false;
+      });
+      return;
+    }
 
     final Map<String, dynamic> listData = json.decode(response.body);
 
     final List<GroceryItem> loadedItems = [];
-
-    print('List Data entries is ${listData.entries}');
 
     for (final item in listData.entries) {
       final category = categories.entries.firstWhere(
@@ -56,21 +75,40 @@ class _GroceriesListState extends State<GroceriesList> {
 
     setState(() {
       _groceryItems = loadedItems;
+      isLoading = false;
     });
   }
 
   void _addItem() async {
-    await Navigator.of(
+    final newItem = await Navigator.of(
       context,
     ).push<GroceryItem>(MaterialPageRoute(builder: (context) => NewItem()));
 
-    _loadItems();
+    if (newItem == null) {
+      return;
+    }
+    setState(() {
+      _groceryItems.add(newItem);
+    });
   }
 
-  void deleteItem(GroceryItem item) {
+  void deleteItem(GroceryItem item) async {
+    final index = _groceryItems.indexOf(item);
     setState(() {
       _groceryItems.remove(item);
     });
+
+    final url = Uri.https(
+      'shopping-list-app-b58bb-default-rtdb.firebaseio.com',
+      'shopping-list/${item.id}.json',
+    );
+    final response = await http.delete(url);
+
+    if (response.statusCode >= 400) {
+      setState(() {
+        _groceryItems.insert(index, item);
+      });
+    }
   }
 
   @override
@@ -83,33 +121,42 @@ class _GroceriesListState extends State<GroceriesList> {
       ),
     );
 
+    if (isLoading) {
+      content = Center(child: CircularProgressIndicator());
+    }
+
+    if (_groceryItems.isNotEmpty) {
+      content = ListView.builder(
+        itemCount: groceries.length,
+        itemBuilder:
+            (context, index) => Dismissible(
+              onDismissed: (direction) {
+                deleteItem(groceries[index]);
+              },
+              key: ValueKey(groceries[index].id),
+              child: ShoppingTile(
+                GroceryItem(
+                  id: groceries[index].id,
+                  name: groceries[index].name,
+                  quantity: groceries[index].quantity,
+                  category: groceries[index].category,
+                ),
+              ),
+            ),
+      );
+    }
+
+    if (_error != null) {
+      content = Center(child: Text(_error!, style: TextStyle(fontSize: 16)));
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Your Groceries'),
         actions: [IconButton(onPressed: _addItem, icon: const Icon(Icons.add))],
       ),
 
-      body:
-          _groceryItems.isEmpty
-              ? content
-              : ListView.builder(
-                itemCount: groceries.length,
-                itemBuilder:
-                    (context, index) => Dismissible(
-                      onDismissed: (direction) {
-                        deleteItem(groceries[index]);
-                      },
-                      key: ValueKey(groceries[index].id),
-                      child: ShoppingTile(
-                        GroceryItem(
-                          id: groceries[index].id,
-                          name: groceries[index].name,
-                          quantity: groceries[index].quantity,
-                          category: groceries[index].category,
-                        ),
-                      ),
-                    ),
-              ),
+      body: content,
     );
   }
 }
