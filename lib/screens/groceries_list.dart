@@ -17,16 +17,15 @@ class GroceriesList extends StatefulWidget {
 
 class _GroceriesListState extends State<GroceriesList> {
   List<GroceryItem> _groceryItems = [];
-  var isLoading = true;
-  String? _error;
+  late Future<List<GroceryItem>> _loadedItems;
 
   @override
   void initState() {
-    _loadItems();
+    _loadedItems = _loadItems();
     super.initState();
   }
 
-  void _loadItems() async {
+  Future<List<GroceryItem>> _loadItems() async {
     final url = Uri.https(
       'shopping-list-app-b58bb-default-rtdb.firebaseio.com',
       'shopping-list.json',
@@ -34,24 +33,10 @@ class _GroceriesListState extends State<GroceriesList> {
 
     http.Response response;
 
-    try {
-      response = await http.get(url);
-
-      if (response.statusCode >= 400) {
-        throw Error();
-      }
-    } catch (err) {
-      setState(() {
-        _error = 'Failed to fetch data, please try again later';
-      });
-      return;
-    }
+    response = await http.get(url);
 
     if (response.body == 'null') {
-      setState(() {
-        isLoading = false;
-      });
-      return;
+      return [];
     }
 
     final Map<String, dynamic> listData = json.decode(response.body);
@@ -73,10 +58,7 @@ class _GroceriesListState extends State<GroceriesList> {
       );
     }
 
-    setState(() {
-      _groceryItems = loadedItems;
-      isLoading = false;
-    });
+    return loadedItems;
   }
 
   void _addItem() async {
@@ -105,58 +87,57 @@ class _GroceriesListState extends State<GroceriesList> {
     final response = await http.delete(url);
 
     if (response.statusCode >= 400) {
-      setState(() {
-        _groceryItems.insert(index, item);
-      });
+      throw Exception('Failed to fetch grocery items, please try again later');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final groceries = _groceryItems;
-    Widget content = const Center(
-      child: Text(
-        'There are currently no items on your list',
-        style: TextStyle(fontSize: 16),
-      ),
-    );
-
-    if (isLoading) {
-      content = Center(child: CircularProgressIndicator());
-    }
-
-    if (_groceryItems.isNotEmpty) {
-      content = ListView.builder(
-        itemCount: groceries.length,
-        itemBuilder:
-            (context, index) => Dismissible(
-              onDismissed: (direction) {
-                deleteItem(groceries[index]);
-              },
-              key: ValueKey(groceries[index].id),
-              child: ShoppingTile(
-                GroceryItem(
-                  id: groceries[index].id,
-                  name: groceries[index].name,
-                  quantity: groceries[index].quantity,
-                  category: groceries[index].category,
-                ),
-              ),
-            ),
-      );
-    }
-
-    if (_error != null) {
-      content = Center(child: Text(_error!, style: TextStyle(fontSize: 16)));
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: Text('Your Groceries'),
         actions: [IconButton(onPressed: _addItem, icon: const Icon(Icons.add))],
       ),
 
-      body: content,
+      body: FutureBuilder(
+        future: _loadedItems,
+        builder: (content, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text(snapshot.error.toString()));
+          }
+          if (snapshot.data!.isEmpty) {
+            return const Center(
+              child: Text(
+                'There are currently no items on your list',
+                style: TextStyle(fontSize: 16),
+              ),
+            );
+          }
+          _groceryItems = snapshot.data!;
+
+          return ListView.builder(
+            itemCount: _groceryItems.length,
+            itemBuilder:
+                (context, index) => Dismissible(
+                  onDismissed: (direction) {
+                    deleteItem(snapshot.data![index]);
+                  },
+                  key: ValueKey(snapshot.data![index].id),
+                  child: ShoppingTile(
+                    GroceryItem(
+                      id: _groceryItems[index].id,
+                      name: _groceryItems[index].name,
+                      quantity: _groceryItems[index].quantity,
+                      category: _groceryItems[index].category,
+                    ),
+                  ),
+                ),
+          );
+        },
+      ),
     );
   }
 }
